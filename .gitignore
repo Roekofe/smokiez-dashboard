@@ -23,7 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 
-# Excel files (optional - remove if you want to commit test files)
-*.xlsx
-*.xls
+# Excel files are now tracked in the data folder
+# *.xlsx
+# *.xls
 .vercel
+.claude/settings.local.json
