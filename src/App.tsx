@@ -1160,186 +1160,124 @@ function App() {
     return recentMonths.reduce((sum, month) => sum + (item[month] || 0), 0);
   };
 
-  // 1. SKU Performance Matrix - Sales Volume vs Inventory Turnover
+  // 1. SKU Performance Matrix - BCG Matrix (Growth Rate vs Revenue)
   const renderPerformanceMatrixTab = () => {
-    // Helper function to calculate 2025-only sales
+    // Helper function to calculate 2025-only sales/revenue
     const calculate2025Sales = (item: any): number => {
       return MONTHS_2025.reduce((sum, month) => sum + (item[month] || 0), 0);
-    };
-
-    // Helper function to calculate market-relative thresholds for 2025 data only (UNITS)
-    const calculateMarketThresholds2025 = (market: string) => {
-      const marketSkus = data.salesByMarketSKUUnits.filter(sku => sku.Market === market);
-      const salesList2025 = marketSkus.map(sku => calculate2025Sales(sku));
-
-      const count = salesList2025.length;
-      const sum = salesList2025.reduce((a, b) => a + b, 0);
-      const mean = sum / count;
-
-      const squaredDiffs = salesList2025.map(val => Math.pow(val - mean, 2));
-      const variance = squaredDiffs.reduce((a, b) => a + b, 0) / count;
-      const stdDev = Math.sqrt(variance);
-
-      return {
-        market,
-        mean,
-        stdDev,
-        strong: mean + (0.5 * stdDev),
-        aboveAverage: mean,
-        average: mean - (0.5 * stdDev),
-        belowAverage: mean - (0.5 * stdDev),
-        weak: mean - (1 * stdDev)
-      };
-    };
-
-    // Helper function to calculate market-relative REVENUE thresholds for 2025 data only
-    const calculateMarketRevenueThresholds2025 = (market: string) => {
-      const marketSkus = data.salesByMarketSKUDollars.filter(sku => sku.Market === market);
-      const revenueList2025 = marketSkus.map(sku => calculate2025Sales(sku));
-
-      const count = revenueList2025.length;
-      const sum = revenueList2025.reduce((a, b) => a + b, 0);
-      const mean = sum / count;
-
-      const squaredDiffs = revenueList2025.map(val => Math.pow(val - mean, 2));
-      const variance = squaredDiffs.reduce((a, b) => a + b, 0) / count;
-      const stdDev = Math.sqrt(variance);
-
-      return {
-        market,
-        mean,
-        stdDev,
-        strong: mean + (0.5 * stdDev),
-        aboveAverage: mean,
-        average: mean - (0.5 * stdDev),
-        belowAverage: mean - (0.5 * stdDev),
-        weak: mean - (1 * stdDev)
-      };
     };
 
     const skuData = data.salesByMarketSKUUnits.map(sku => {
       const inventory = sku.Inventory || 0;
       const monthsOnHand = sku['Months of Inventory'] || 0;
-      // Use 2025 sales only for performance matrix
       const recentSales = calculate2025Sales(sku);
       const totalSold = sku.Total || 0;
-
-      // Calculate actual sales rate (units per month in 2025)
-      const salesRate = MONTHS_2025.length > 0 ? recentSales / MONTHS_2025.length : 0;
-
-      // Calculate inventory turnover rate for legacy compatibility
-      const turnoverRate = monthsOnHand > 0 ? 12 / monthsOnHand : 0;
 
       // Get dollar value from 2025 only
       const dollarData = data.salesByMarketSKUDollars.find(d => d.SKU === sku.SKU && d.Market === sku.Market);
       const revenue = dollarData ? calculate2025Sales(dollarData) : 0;
 
-      // Calculate revenue-based metrics
-      const revenueRate = MONTHS_2025.length > 0 ? revenue / MONTHS_2025.length : 0; // $/month
-      const revenuePerUnit = recentSales > 0 ? revenue / recentSales : 0; // $/unit (margin indicator)
-
-      // Get market-relative thresholds based on 2025 REVENUE data
-      const revenueThresholds = calculateMarketRevenueThresholds2025(sku.Market);
+      // Calculate revenue per unit ($/unit) - margin indicator
+      const revenuePerUnit = recentSales > 0 ? revenue / recentSales : 0;
 
       // Calculate sales consistency: how many months in 2025 had sales > 0
       const monthsWithSales = MONTHS_2025.filter(month => (sku[month] || 0) > 0).length;
       const salesConsistency = MONTHS_2025.length > 0 ? monthsWithSales / MONTHS_2025.length : 0;
 
-      // Calculate if SKU is declining or stable/growing (using REVENUE, not units)
-      // Compare first half vs second half of 2025
+      // BCG MATRIX: Calculate Growth Rate (H2 vs H1 2025)
       const halfPoint = Math.floor(MONTHS_2025.length / 2);
       let firstHalfRevenue = 0;
       let secondHalfRevenue = 0;
+
       if (dollarData) {
         firstHalfRevenue = MONTHS_2025.slice(0, halfPoint).reduce((sum, m) => sum + (dollarData[m] || 0), 0);
         secondHalfRevenue = MONTHS_2025.slice(halfPoint).reduce((sum, m) => sum + (dollarData[m] || 0), 0);
       }
-      const isGrowing = secondHalfRevenue >= firstHalfRevenue; // Stable or growing revenue
 
-      // Improved categorization considering REVENUE rate, consistency, and trends
-      let category: string;
-
-      // Market-relative REVENUE rate threshold (mean revenue rate for the market)
-      const marketRevenueRate = MONTHS_2025.length > 0 ? revenueThresholds.mean / MONTHS_2025.length : 0;
-      const highRevenue = revenue > revenueThresholds.strong; // Strong revenue generation
-      const fastRevenueRate = revenueRate > marketRevenueRate; // Generates $ faster than market average
-      const consistent = salesConsistency >= 0.6; // Sold in 60%+ of months
-
-      if (highRevenue && fastRevenueRate && consistent) {
-        category = 'Star'; // High revenue + fast rate + consistent = best performers
-      } else if (highRevenue && !fastRevenueRate && consistent) {
-        category = 'Cash Cow'; // High revenue but slower rate - still profitable
-      } else if (!highRevenue && fastRevenueRate && consistent) {
-        category = 'Question Mark'; // Lower revenue but generates $ quickly and consistently
-      } else if (!highRevenue && consistent && isGrowing) {
-        category = 'Steady Low Performer'; // Consistent + growing revenue niche product
-      } else {
-        category = 'Dog'; // Sporadic, declining revenue, or inconsistent - discontinuation candidate
-      }
+      // Growth rate as percentage: (H2 - H1) / H1 * 100
+      // If H1 is 0, use H2 as a proxy for growth potential
+      const growthRate = firstHalfRevenue > 0
+        ? ((secondHalfRevenue - firstHalfRevenue) / firstHalfRevenue) * 100
+        : (secondHalfRevenue > 0 ? 100 : 0); // New products get 100% if they have H2 sales
 
       return {
         sku: sku.SKU,
         market: sku.Market,
         totalSold,
         recentSales,
-        salesRate, // Average units sold per month
-        revenue, // Total 2025 revenue
-        revenueRate, // Revenue per month ($/month) - PRIMARY METRIC
-        revenuePerUnit, // Revenue per unit ($/unit) - margin indicator
+        revenue, // Total 2025 revenue - Y-axis
+        growthRate, // Growth % (H2 vs H1) - X-axis
+        revenuePerUnit, // $/unit margin indicator
         inventory,
         monthsOnHand,
-        turnoverRate,
         salesConsistency, // 0-1, percentage of months with sales
-        isGrowing, // true if second half revenue >= first half revenue
-        category
+        firstHalfRevenue,
+        secondHalfRevenue,
+        category: '' // Will be calculated after thresholds
       };
     });
 
-    // Cap turnover rate at 50x for visualization (anything higher makes chart unreadable)
-    const cappedData = skuData.map(d => ({
-      ...d,
-      turnoverRate: Math.min(d.turnoverRate, 50) // Cap at 50x for chart readability
-    }));
+    // Calculate BCG thresholds (median revenue and median growth rate)
+    const allRevenues = skuData.map(d => d.revenue).filter(r => r > 0);
+    const allGrowthRates = skuData.map(d => d.growthRate);
+
+    const medianRevenue = allRevenues.length > 0
+      ? allRevenues.sort((a, b) => a - b)[Math.floor(allRevenues.length / 2)]
+      : 0;
+
+    const medianGrowthRate = allGrowthRates.length > 0
+      ? allGrowthRates.sort((a, b) => a - b)[Math.floor(allGrowthRates.length / 2)]
+      : 0;
+
+    // Categorize SKUs using BCG Matrix
+    const categorizedData = skuData.map(d => {
+      const highRevenue = d.revenue >= medianRevenue;
+      const highGrowth = d.growthRate >= medianGrowthRate;
+      const isSporadic = d.salesConsistency < 0.6; // Less than 60% consistency
+
+      let category: string;
+      if (highRevenue && highGrowth) {
+        category = 'Star'; // High revenue + growing = invest more
+      } else if (highRevenue && !highGrowth) {
+        category = 'Cash Cow'; // High revenue + stable/declining = harvest profits
+      } else if (!highRevenue && highGrowth) {
+        category = 'Question Mark'; // Low revenue + growing = monitor/invest selectively
+      } else {
+        category = 'Dog'; // Low revenue + declining = phase out
+      }
+
+      return {
+        ...d,
+        category,
+        isSporadic // Flag for consistency warning
+      };
+    });
 
     // Filter by market
     let filteredData = selectedMarket === 'All'
-      ? cappedData
-      : cappedData.filter(d => d.market === selectedMarket);
-
-    // Debug logging for NM market
-    if (selectedMarket === 'NM') {
-      console.log('NM SKUs after market filter:', filteredData.length);
-      console.log('NM SKUs data:', filteredData.map(d => ({ sku: d.sku, inventory: d.inventory, revenue: d.revenue })));
-    }
+      ? categorizedData
+      : categorizedData.filter(d => d.market === selectedMarket);
 
     // Apply minimum inventory threshold (user-controlled filter for deprecated items)
-    const afterInventoryThreshold = filteredData.filter(d => d.inventory >= minInventoryThreshold);
-    if (selectedMarket === 'NM') {
-      console.log('NM SKUs after inventory threshold filter:', afterInventoryThreshold.length);
-    }
-    filteredData = afterInventoryThreshold;
+    filteredData = filteredData.filter(d => d.inventory >= minInventoryThreshold);
 
     // Remove entries with 0 inventory (these are definitely discontinued/out of stock)
     filteredData = filteredData.filter(d => d.inventory > 0);
-    if (selectedMarket === 'NM') {
-      console.log('NM SKUs after zero inventory filter:', filteredData.length);
-    }
 
     // Category counts
     const categoryCounts = {
       'Star': filteredData.filter(d => d.category === 'Star').length,
       'Cash Cow': filteredData.filter(d => d.category === 'Cash Cow').length,
       'Question Mark': filteredData.filter(d => d.category === 'Question Mark').length,
-      'Steady Low Performer': filteredData.filter(d => d.category === 'Steady Low Performer').length,
       'Dog': filteredData.filter(d => d.category === 'Dog').length
     };
 
     return (
       <div className="space-y-6">
         <div className="bg-white p-6 rounded-lg shadow-md">
-          <h3 className="text-xl font-bold text-amber-800 mb-4">SKU Performance Matrix - Revenue Analysis</h3>
+          <h3 className="text-xl font-bold text-amber-800 mb-4">SKU Performance Matrix - BCG Analysis</h3>
           <p className="text-sm text-gray-600 mb-4">
-            Analyze SKUs by revenue generation rate and total revenue. Each SKU is weighted by its actual dollar return per unit. High revenue rate + high total revenue = Stars ⭐
+            Boston Consulting Group (BCG) Matrix: Identify which products to invest in, maintain, or discontinue based on revenue performance and growth trajectory.
           </p>
 
           {/* Data Recency Banner */}
@@ -1349,51 +1287,41 @@ function App() {
                 <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
               </svg>
               <div className="flex-1">
-                <p className="text-sm font-medium text-blue-800">2025 Revenue Data Only</p>
-                <p className="text-xs text-blue-700 mt-1">Performance Matrix analyzes only 2025 revenue data (January - October 2025) to focus on current financial performance. Categories are based on revenue rate, not just unit volume.</p>
+                <p className="text-sm font-medium text-blue-800">2025 Data Analysis</p>
+                <p className="text-xs text-blue-700 mt-1">Growth rate compares H2 2025 (Jun-Oct) vs H1 2025 (Jan-May). Products are positioned relative to median revenue and median growth rate across all SKUs.</p>
               </div>
             </div>
           </div>
 
           {/* Key Definitions */}
           <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-md">
-            <p className="text-sm font-bold text-amber-900 mb-2">Understanding the Metrics:</p>
+            <p className="text-sm font-bold text-amber-900 mb-2">Understanding the BCG Matrix:</p>
             <div className="space-y-2 text-xs text-gray-700">
               <div>
-                <span className="font-semibold text-amber-800">Revenue Rate (X-axis):</span> Average revenue generated per month in 2025.
+                <span className="font-semibold text-amber-800">Growth Rate (X-axis):</span> Revenue growth comparing H2 2025 to H1 2025.
                 <br />
-                <span className="italic">Formula: Total 2025 Revenue ÷ 10 months</span>
+                <span className="italic">Formula: (H2 Revenue - H1 Revenue) / H1 Revenue × 100%</span>
                 <br />
-                <span className="text-gray-600">This measures how fast a SKU generates money. Compared to market average revenue rate. High-margin products naturally score higher.</span>
+                <span className="text-gray-600">Positive = growing, Negative = declining. Products right of median are outperforming.</span>
               </div>
               <div className="pt-2 border-t border-amber-200">
                 <span className="font-semibold text-amber-800">Total Revenue (Y-axis):</span> Total dollars generated in 2025.
                 <br />
-                <span className="text-gray-600">Evaluated relative to market's 2025 revenue patterns. Higher = stronger financial impact in that market.</span>
+                <span className="text-gray-600">Products above median revenue are your high performers. Higher = bigger financial impact.</span>
               </div>
               <div className="pt-2 border-t border-amber-200">
-                <span className="font-semibold text-amber-800">Revenue per Unit:</span> Average dollars per unit sold (shown in tooltip).
+                <span className="font-semibold text-amber-800">Consistency Warning (⚠️):</span> Products with sporadic sales.
                 <br />
-                <span className="text-gray-600">Margin indicator - helps distinguish high-value SKUs from high-volume low-margin items. Formula: Total Revenue ÷ Total Units.</span>
+                <span className="text-gray-600">If a product sold in less than 60% of months, it gets a warning flag. May indicate seasonal patterns or data quality issues.</span>
               </div>
               <div className="pt-2 border-t border-amber-200">
-                <span className="font-semibold text-amber-800">Filtering:</span>
-                <br />
-                <span className="text-gray-600">
-                  • Automatically excludes SKUs with 0 inventory (discontinued/out-of-stock)<br />
-                  • Use "Min Inventory Threshold" slider below to filter out deprecated SKUs with low remaining stock<br />
-                  • All active SKUs with inventory are shown - no artificial sales/revenue minimums applied
-                </span>
-              </div>
-              <div className="pt-2 border-t border-amber-200">
-                <span className="font-semibold text-amber-800">Categories (based on revenue rate, total revenue, consistency & trend):</span>
+                <span className="font-semibold text-amber-800">BCG Categories & Actions:</span>
                 <br />
                 <span className="text-gray-600">
-                  ⭐ <strong>Stars</strong>: High revenue + fast rate + consistent = best financial performers.<br />
-                  💰 <strong>Cash Cows</strong>: High revenue + slower rate + consistent = reliable profit.<br />
-                  ❓ <strong>Question Marks</strong>: Lower revenue + fast rate + consistent = efficient emerging products.<br />
-                  📊 <strong>Steady Low</strong>: Consistent + growing revenue = stable niche products.<br />
-                  🐕 <strong>Dogs</strong>: Sporadic, declining revenue, or inconsistent = discontinuation candidates.
+                  ⭐ <strong>Stars</strong>: High revenue + growing → <strong>Invest more</strong> - protect and expand.<br />
+                  💰 <strong>Cash Cows</strong>: High revenue + stable/declining → <strong>Harvest</strong> - maintain, don't over-invest.<br />
+                  ❓ <strong>Question Marks</strong>: Low revenue + growing → <strong>Monitor</strong> - invest selectively if trend continues.<br />
+                  🐕 <strong>Dogs</strong>: Low revenue + declining → <strong>Discontinue</strong> - phase out unless strategic reason.
                 </span>
               </div>
             </div>
@@ -1454,10 +1382,10 @@ function App() {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis
                 type="number"
-                dataKey="revenueRate"
-                name="Revenue Rate ($/month)"
-                tickFormatter={(value) => `$${value.toLocaleString(undefined, {maximumFractionDigits: 0})}`}
-                label={{ value: 'Revenue Rate ($/month)', position: 'bottom', offset: 40 }}
+                dataKey="growthRate"
+                name="Growth Rate (%)"
+                tickFormatter={(value) => `${value.toFixed(0)}%`}
+                label={{ value: 'Growth Rate (H2 vs H1 2025, %)', position: 'bottom', offset: 40 }}
               />
               <YAxis
                 type="number"
@@ -1474,29 +1402,32 @@ function App() {
                     const data = payload[0].payload;
                     return (
                       <div style={{ backgroundColor: 'white', padding: '12px', border: '1px solid #ccc', borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-                        <p style={{ fontWeight: 'bold', marginBottom: '8px' }}>{data.sku}</p>
+                        <p style={{ fontWeight: 'bold', marginBottom: '8px' }}>
+                          {data.sku} {data.isSporadic && '⚠️'}
+                        </p>
                         <p style={{ fontSize: '12px', margin: '4px 0' }}>Market: {data.market}</p>
-                        <p style={{ fontSize: '12px', margin: '4px 0', fontWeight: 'bold', color: '#2563eb' }}>Revenue Rate: ${data.revenueRate.toLocaleString(undefined, {maximumFractionDigits: 0})}/month</p>
+                        <p style={{ fontSize: '12px', margin: '4px 0', fontWeight: 'bold', color: data.growthRate >= 0 ? '#059669' : '#dc2626' }}>
+                          Growth Rate: {data.growthRate.toFixed(1)}%
+                        </p>
                         <p style={{ fontSize: '12px', margin: '4px 0' }}>2025 Revenue: ${data.revenue.toLocaleString()}</p>
                         <p style={{ fontSize: '12px', margin: '4px 0', fontWeight: 'bold', color: '#059669' }}>Revenue/Unit: ${data.revenuePerUnit.toFixed(2)}</p>
                         <div style={{ borderTop: '1px solid #e5e7eb', marginTop: '8px', paddingTop: '8px' }}>
-                          <p style={{ fontSize: '12px', margin: '4px 0' }}>Sales Rate: {data.salesRate.toFixed(1)} units/month</p>
+                          <p style={{ fontSize: '12px', margin: '4px 0' }}>H1 2025 Revenue: ${data.firstHalfRevenue.toLocaleString()}</p>
+                          <p style={{ fontSize: '12px', margin: '4px 0' }}>H2 2025 Revenue: ${data.secondHalfRevenue.toLocaleString()}</p>
                           <p style={{ fontSize: '12px', margin: '4px 0' }}>2025 Units: {data.recentSales.toLocaleString()}</p>
                           <p style={{ fontSize: '12px', margin: '4px 0', color: '#6b7280' }}>Inventory: {data.inventory.toLocaleString()} units ({data.monthsOnHand.toFixed(1)} months)</p>
                         </div>
                         <div style={{ borderTop: '1px solid #e5e7eb', marginTop: '8px', paddingTop: '8px' }}>
                           <p style={{ fontSize: '12px', margin: '4px 0', color: data.salesConsistency >= 0.7 ? '#059669' : data.salesConsistency >= 0.4 ? '#d97706' : '#dc2626' }}>
                             Consistency: {(data.salesConsistency * 100).toFixed(0)}% ({Math.round(data.salesConsistency * MONTHS_2025.length)}/{MONTHS_2025.length} months)
-                          </p>
-                          <p style={{ fontSize: '12px', margin: '4px 0', color: data.isGrowing ? '#059669' : '#dc2626' }}>
-                            Trend: {data.isGrowing ? '📈 Stable/Growing' : '📉 Declining'}
+                            {data.isSporadic && ' ⚠️ Sporadic'}
                           </p>
                         </div>
                         <p style={{ fontSize: '12px', margin: '8px 0 4px 0', fontWeight: 'bold', color:
                           data.category === 'Star' ? '#059669' :
                           data.category === 'Cash Cow' ? '#2563eb' :
                           data.category === 'Question Mark' ? '#d97706' :
-                          data.category === 'Steady Low Performer' ? '#6366f1' : '#dc2626'
+                          '#dc2626'
                         }}>
                           Category: {data.category}
                         </p>
@@ -1515,7 +1446,6 @@ function App() {
                     'Star': '#059669',
                     'Cash Cow': '#2563eb',
                     'Question Mark': '#d97706',
-                    'Steady Low Performer': '#6366f1',
                     'Dog': '#dc2626'
                   };
                   return (
@@ -1526,40 +1456,37 @@ function App() {
             </ScatterChart>
           </ResponsiveContainer>
 
-          <div className="mt-6 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
               <div className="flex flex-col">
                 <p className="text-sm text-green-700 font-medium">⭐ Stars</p>
                 <p className="text-2xl font-bold text-green-900 my-2">{categoryCounts['Star']}</p>
-                <p className="text-xs text-green-600">High Revenue + Fast Rate</p>
+                <p className="text-xs text-green-600">High Revenue + Growing</p>
+                <p className="text-xs text-green-800 font-semibold mt-2">→ Invest More</p>
               </div>
             </div>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <div className="flex flex-col">
                 <p className="text-sm text-blue-700 font-medium">💰 Cash Cows</p>
                 <p className="text-2xl font-bold text-blue-900 my-2">{categoryCounts['Cash Cow']}</p>
-                <p className="text-xs text-blue-600">High Revenue + Steady</p>
+                <p className="text-xs text-blue-600">High Revenue + Stable</p>
+                <p className="text-xs text-blue-800 font-semibold mt-2">→ Harvest Profits</p>
               </div>
             </div>
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
               <div className="flex flex-col">
                 <p className="text-sm text-yellow-700 font-medium">❓ Question Marks</p>
                 <p className="text-2xl font-bold text-yellow-900 my-2">{categoryCounts['Question Mark']}</p>
-                <p className="text-xs text-yellow-600">Fast Rate + Emerging</p>
-              </div>
-            </div>
-            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-              <div className="flex flex-col">
-                <p className="text-sm text-indigo-700 font-medium">📊 Steady Low</p>
-                <p className="text-2xl font-bold text-indigo-900 my-2">{categoryCounts['Steady Low Performer']}</p>
-                <p className="text-xs text-indigo-600">Growing Niche Revenue</p>
+                <p className="text-xs text-yellow-600">Low Revenue + Growing</p>
+                <p className="text-xs text-yellow-800 font-semibold mt-2">→ Monitor Closely</p>
               </div>
             </div>
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
               <div className="flex flex-col">
                 <p className="text-sm text-red-700 font-medium">🐕 Dogs</p>
                 <p className="text-2xl font-bold text-red-900 my-2">{categoryCounts['Dog']}</p>
-                <p className="text-xs text-red-600">Declining Revenue</p>
+                <p className="text-xs text-red-600">Low Revenue + Declining</p>
+                <p className="text-xs text-red-800 font-semibold mt-2">→ Consider Discontinuing</p>
               </div>
             </div>
           </div>
